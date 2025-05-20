@@ -1,122 +1,135 @@
 import sys
 import serial
 import serial.tools.list_ports
+import time
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QTextEdit, QLineEdit, QMessageBox
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QComboBox, QLineEdit, QPlainTextEdit, QTabWidget, QLabel
 )
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QTimer
+import pyqtgraph as pg
 
-
-class SerialReader(QThread):
-    data_received = pyqtSignal(str)
-
-    def __init__(self, serial_port):
-        super().__init__()
-        self.serial_port = serial_port
-        self.running = True
-
-    def run(self):
-        while self.running:
-            if self.serial_port.in_waiting:
-                try:
-                    line = self.serial_port.readline().decode('utf-8').strip()
-                    self.data_received.emit(line)
-                except Exception:
-                    pass
-
-    def stop(self):
-        self.running = False
-        self.quit()
-        self.wait()
-
-
-class SerialApp(QWidget):
+class SerialMonitor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Pokerobo Serimon")
-        self.serial_port = None
-        self.reader_thread = None
+        self.resize(800, 600)
+
+        self.serial = None
+        self.last_read_time = time.time()
+        self.line_count = 0
+        self.byte_count = 0
 
         self.init_ui()
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.read_serial)
+        self.timer.start(50)
+
+        self.stats_timer = QTimer()
+        self.stats_timer.timeout.connect(self.update_stats)
+        self.stats_timer.start(1000)
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        self.tabs = QTabWidget()
+        self.console_tab = QWidget()
+        self.diagram_tab = QWidget()
+        self.tabs.addTab(self.console_tab, "Console")
+        self.tabs.addTab(self.diagram_tab, "Diagram")
 
-        # Cổng COM
-        port_layout = QHBoxLayout()
-        self.port_label = QLabel("Port:")
-        self.port_combo = QComboBox()
-        self.port_combo.addItems(self.get_serial_ports())
+        # ==== Top control layout ====
+        self.port_cb = QComboBox()
+        self.baud_cb = QComboBox()
+        self.baud_cb.addItems(["9600", "19200", "38400", "57600", "115200", "250000"])
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.clicked.connect(self.toggle_serial)
+        self.refresh_ports()
 
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self.toggle_connection)
+        top_layout = QHBoxLayout()
+        top_layout.addWidget(QLabel("COM Port:"))
+        top_layout.addWidget(self.port_cb)
+        top_layout.addWidget(QLabel("Baudrate:"))
+        top_layout.addWidget(self.baud_cb)
+        top_layout.addWidget(self.connect_btn)
 
-        port_layout.addWidget(self.port_label)
-        port_layout.addWidget(self.port_combo)
-        port_layout.addWidget(self.connect_button)
-        layout.addLayout(port_layout)
+        # ==== Console tab ====
+        self.console_output = QPlainTextEdit()
+        self.console_output.setReadOnly(True)
+        self.console_input = QLineEdit()
+        self.console_input.returnPressed.connect(self.send_serial)
 
-        # Vùng hiển thị
-        self.output_text = QTextEdit()
-        self.output_text.setReadOnly(True)
-        layout.addWidget(self.output_text)
+        console_layout = QVBoxLayout()
+        console_layout.addLayout(top_layout)
+        console_layout.addWidget(self.console_output)
+        console_layout.addWidget(self.console_input)
+        self.console_tab.setLayout(console_layout)
 
-        # Gửi dữ liệu
-        send_layout = QHBoxLayout()
-        self.input_line = QLineEdit()
-        self.send_button = QPushButton("Send")
-        self.send_button.clicked.connect(self.send_data)
-        send_layout.addWidget(self.input_line)
-        send_layout.addWidget(self.send_button)
-        layout.addLayout(send_layout)
+        # ==== Diagram tab ====
+        self.line_plot = pg.PlotWidget(title="Messages per second")
+        self.byte_plot = pg.PlotWidget(title="Bytes per second")
+        self.line_curve = self.line_plot.plot(pen='g')
+        self.byte_curve = self.byte_plot.plot(pen='b')
+        self.line_data = []
+        self.byte_data = []
 
-        self.setLayout(layout)
+        diagram_layout = QVBoxLayout()
+        diagram_layout.addWidget(self.line_plot)
+        diagram_layout.addWidget(self.byte_plot)
+        self.diagram_tab.setLayout(diagram_layout)
 
-    def get_serial_ports(self):
+        self.setCentralWidget(self.tabs)
+
+    def refresh_ports(self):
+        self.port_cb.clear()
         ports = serial.tools.list_ports.comports()
-        return [port.device for port in ports]
+        for port in ports:
+            self.port_cb.addItem(port.device)
 
-    def toggle_connection(self):
-        if self.serial_port and self.serial_port.is_open:
-            self.disconnect_serial()
+    def toggle_serial(self):
+        if self.serial and self.serial.is_open:
+            self.serial.close()
+            self.serial = None
+            self.connect_btn.setText("Connect")
+            self.console_output.appendPlainText("[Disconnected]")
         else:
-            self.connect_serial()
+            port = self.port_cb.currentText()
+            baudrate = int(self.baud_cb.currentText())
+            try:
+                self.serial = serial.Serial(port, baudrate, timeout=0.1)
+                self.connect_btn.setText("Disconnect")
+                self.console_output.appendPlainText(f"[Connected to {port} at {baudrate} bps]")
+            except Exception as e:
+                self.console_output.appendPlainText(f"[Error opening port: {e}]")
+                self.serial = None
 
-    def connect_serial(self):
-        port = self.port_combo.currentText()
-        try:
-            self.serial_port = serial.Serial(port, baudrate=57600, timeout=1)
-            self.reader_thread = SerialReader(self.serial_port)
-            self.reader_thread.data_received.connect(self.display_data)
-            self.reader_thread.start()
-            self.connect_button.setText("Disconnect")
-        except serial.SerialException as e:
-            QMessageBox.critical(self, "Error:", str(e))
+    def send_serial(self):
+        if self.serial and self.serial.is_open:
+            text = self.console_input.text()
+            self.serial.write((text + '\n').encode())
+            self.console_input.clear()
 
-    def disconnect_serial(self):
-        if self.reader_thread:
-            self.reader_thread.stop()
-        if self.serial_port and self.serial_port.is_open:
-            self.serial_port.close()
-        self.connect_button.setText("Connect")
+    def read_serial(self):
+        if self.serial and self.serial.is_open:
+            try:
+                while self.serial.in_waiting:
+                    line = self.serial.readline().decode(errors='ignore').strip()
+                    self.console_output.appendPlainText(line)
+                    self.line_count += 1
+                    self.byte_count += len(line.encode())
+            except Exception as e:
+                self.console_output.appendPlainText(f"[Read error: {e}]")
 
-    def send_data(self):
-        if self.serial_port and self.serial_port.is_open:
-            data = self.input_line.text()
-            if data:
-                self.serial_port.write((data + '\n').encode())
-
-    def display_data(self, data):
-        self.output_text.append(data)
-
-    def closeEvent(self, event):
-        self.disconnect_serial()
-        event.accept()
-
+    def update_stats(self):
+        self.line_data.append(self.line_count)
+        self.byte_data.append(self.byte_count)
+        self.line_data = self.line_data[-60:]
+        self.byte_data = self.byte_data[-60:]
+        self.line_curve.setData(self.line_data)
+        self.byte_curve.setData(self.byte_data)
+        self.line_count = 0
+        self.byte_count = 0
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = SerialApp()
-    window.show()
+    win = SerialMonitor()
+    win.show()
     sys.exit(app.exec())
