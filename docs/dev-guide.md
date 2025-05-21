@@ -191,6 +191,26 @@ if __name__ == "__main__":
     sys.exit(app.exec())
 ```
 
+#### Chương trình thử trên Arduino
+
+Tạo một Sketch rỗng trong Arduino IDE, chép và dán chương trình mẫu bên dưới sau đó nạp code để thử nghiệm:
+
+```cpp
+#include <Arduino.h>
+
+void setup() {
+  Serial.begin(57600);
+  randomSeed(analogRead(0));
+}
+
+uint32_t count = 0;
+
+void loop() {
+  Serial.print("[I] count: "), Serial.println(count++);
+  delay(random(0, 1000));
+}
+```
+
 ## Hướng mở rộng
 
 - Điều khiển và nhận dữ liệu từ thiết bị nhúng qua USB
