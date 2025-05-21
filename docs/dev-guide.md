@@ -18,12 +18,50 @@ Xây dựng ứng dụng Serial Monitor dùng cho ứng dụng Pokerobo có hỗ
 
 ## Các bước thực hiện
 
+### Cài đặt Python
+
+Tùy theo hệ điều hành có thể cài đặt bản Python tương ứng.
+
+### Tải mã nguồn từ github
+
+```shell
+git clone https://github.com/pokerobo/Pokerobo_Serimon.git
+```
+
+Chuyển vào trong thư mục dự án này:
+
+```shell
+cd Pokerobo_Serimon
+```
+
 ### Cài đặt môi trường
+
+#### Tạo môi trường venv
+
+Khởi tạo môi trường tại thư mục `.venv`:
+
+```shell
+python -m venv .venv
+```
+
+Kích hoạt môi trường này:
+
+```shell
+source .venv/bin/activate
+```
 
 #### Thư viện Python cần thiết
 
-```bash
-pip install pyqt6 pyserial
+Cài đặt các thư viện cần thiết:
+
+```shell
+pip install pyqt6 pyqtgraph pyserial
+```
+
+Cài đặt thư viện hỗ trợ lưu cấu hình:
+
+```shell
+pip install platformdirs
 ```
 
 #### Mã nguồn chương trình
